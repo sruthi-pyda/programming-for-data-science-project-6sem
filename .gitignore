@@ -1,0 +1,27 @@
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Temp files
+~$*
+*.tmp
+
+# Large data files
+data/traffic_collisions_clean.csv
+data/traffic_collisions_raw.csv
+
+# R
+.Rhistory
+.RData
+.Rproj.user/
+
+# Flutter/Dart
+flutter_app/build/
+flutter_app/.dart_tool/
+flutter_app/.flutter-plugins
+flutter_app/.flutter-plugins-dependencies
+*.iml
+
+# Claude internal
+.claude/
