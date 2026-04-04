@@ -11,6 +11,15 @@
 data/traffic_collisions_clean.csv
 data/traffic_collisions_raw.csv
 
+# Environment / secrets
+.env
+
+# Power BI export cache
+data/powerbi_export/
+
+# API log (can contain sensitive info)
+data/api_call_log.csv
+
 # R
 .Rhistory
 .RData
