@@ -9,10 +9,12 @@ library(randomForest)
 library(data.table)
 
 # ── Load artefacts at startup ─────────────────────────────────────────────────
-models_dir   <- file.path(dirname(getwd()), "data", "models")
+# Supports both local dev (r_engine/ subfolder) and Docker (/app root)
+app_root     <- Sys.getenv("APP_ROOT", unset = dirname(getwd()))
+models_dir   <- file.path(app_root, "data", "models")
 best_model   <- readRDS(file.path(models_dir, "random_forest.rds"))
-area_ranking <- fread(file.path(dirname(getwd()), "data", "area_risk_ranking.csv"))
-cluster_data <- fread(file.path(dirname(getwd()), "data", "hotspot_clusters.csv"))
+area_ranking <- fread(file.path(app_root, "data", "area_risk_ranking.csv"))
+cluster_data <- fread(file.path(app_root, "data", "hotspot_clusters.csv"))
 
 # ── CORS helper (Flutter on emulator/device needs this) ──────────────────────
 #* @filter cors
