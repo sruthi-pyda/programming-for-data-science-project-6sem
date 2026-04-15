@@ -16,6 +16,41 @@ best_model   <- readRDS(file.path(models_dir, "random_forest.rds"))
 area_ranking <- fread(file.path(app_root, "data", "area_risk_ranking.csv"))
 cluster_data <- fread(file.path(app_root, "data", "hotspot_clusters.csv"))
 
+# ── Helper: build input data.frame with all required features ─────────────────
+make_input <- function(area, hour, month_num, day_num, premis_cd,
+                       avg_victim_age, avg_severity, avg_hist_freq, prop_female,
+                       area_mean = 10000, hour_mean = 25000,
+                       area_hour_mean = 1000, area_month_mean = 1200,
+                       area_day_mean = 800, hour_day_mean = 900,
+                       premis_mean = 500) {
+  h <- as.integer(hour)
+  m <- as.integer(month_num)
+  d <- as.integer(day_num)
+  data.frame(
+    area             = as.integer(area),
+    hour             = h,
+    month_num        = m,
+    day_num          = d,
+    premis_cd        = as.integer(premis_cd),
+    avg_victim_age   = as.numeric(avg_victim_age),
+    avg_severity     = as.numeric(avg_severity),
+    avg_hist_freq    = as.numeric(avg_hist_freq),
+    prop_female      = as.numeric(prop_female),
+    area_hour_mean   = as.numeric(area_hour_mean),
+    area_month_mean  = as.numeric(area_month_mean),
+    area_day_mean    = as.numeric(area_day_mean),
+    hour_day_mean    = as.numeric(hour_day_mean),
+    area_mean        = as.numeric(area_mean),
+    premis_mean      = as.numeric(premis_mean),
+    hour_mean        = as.numeric(hour_mean),
+    is_weekend       = as.integer(d %in% c(1L, 7L)),
+    hour_sin         = sin(2 * pi * h / 24),
+    hour_cos         = cos(2 * pi * h / 24),
+    month_sin        = sin(2 * pi * m / 12),
+    month_cos        = cos(2 * pi * m / 12)
+  )
+}
+
 # ── CORS helper (Flutter on emulator/device needs this) ──────────────────────
 #* @filter cors
 function(req, res) {
@@ -33,7 +68,7 @@ function(req, res) {
 #* @get /health
 #* @serializer json
 function() {
-  list(status = "ok", model = "Random Forest", version = "1.0")
+  list(status = "ok", model = "Random Forest", version = "2.0")
 }
 
 # ── Predict Risk Level ────────────────────────────────────────────────────────
@@ -42,23 +77,21 @@ function() {
 #* @param area:int      LAPD area code (1–21)
 #* @param hour:int      Hour of day (0–23)
 #* @param month_num:int Month number (1–12)
+#* @param day_num:int   Day of week (1=Sun … 7=Sat, default 4=Wed)
 #* @param premis_cd:int Premise code
 #* @param avg_victim_age:double  Average victim age (default 35)
 #* @param avg_severity:double    Average MO code count (default 2)
+#* @param avg_hist_freq:double   Historical frequency (default 100)
+#* @param prop_female:double     Proportion female victims (default 0.5)
 #*
 #* @get /predict
 #* @serializer json
-function(area = 1, hour = 12, month_num = 6,
-         premis_cd = 101, avg_victim_age = 35, avg_severity = 2) {
+function(area = 1, hour = 12, month_num = 6, day_num = 4,
+         premis_cd = 101, avg_victim_age = 35, avg_severity = 2,
+         avg_hist_freq = 100, prop_female = 0.5) {
 
-  input <- data.frame(
-    area           = as.integer(area),
-    hour           = as.integer(hour),
-    month_num      = as.integer(month_num),
-    premis_cd      = as.integer(premis_cd),
-    avg_victim_age = as.numeric(avg_victim_age),
-    avg_severity   = as.numeric(avg_severity)
-  )
+  input <- make_input(area, hour, month_num, day_num, premis_cd,
+                      avg_victim_age, avg_severity, avg_hist_freq, prop_female)
 
   predicted_class <- as.character(predict(best_model, input))
   probabilities   <- as.data.frame(predict(best_model, input, type = "prob"))
@@ -96,8 +129,21 @@ function(req) {
     return(list(error = paste("Missing columns:", paste(setdiff(required_cols, names(df)), collapse = ", "))))
   }
 
-  if (!"avg_victim_age" %in% names(df)) df$avg_victim_age <- 35
-  if (!"avg_severity"   %in% names(df)) df$avg_severity   <- 2
+  if (!"day_num"          %in% names(df)) df$day_num          <- 4L
+  if (!"avg_victim_age"   %in% names(df)) df$avg_victim_age   <- 35
+  if (!"avg_severity"     %in% names(df)) df$avg_severity     <- 2
+  if (!"avg_hist_freq"    %in% names(df)) df$avg_hist_freq    <- 100
+  if (!"prop_female"      %in% names(df)) df$prop_female      <- 0.5
+  if (!"area_total"       %in% names(df)) df$area_total       <- 10000
+  if (!"hour_total"       %in% names(df)) df$hour_total       <- 25000
+  if (!"area_hour_total"  %in% names(df)) df$area_hour_total  <- 1000
+  if (!"area_day_total"   %in% names(df)) df$area_day_total   <- 5000
+
+  df$is_weekend <- as.integer(df$day_num %in% c(1L, 7L))
+  df$hour_sin   <- sin(2 * pi * df$hour / 24)
+  df$hour_cos   <- cos(2 * pi * df$hour / 24)
+  df$month_sin  <- sin(2 * pi * df$month_num / 12)
+  df$month_cos  <- cos(2 * pi * df$month_num / 12)
 
   predictions   <- as.character(predict(best_model, df))
   probabilities <- as.data.frame(predict(best_model, df, type = "prob"))

@@ -11,6 +11,7 @@ RUN apt-get update && apt-get install -y \
     libssl-dev \
     libxml2-dev \
     libsodium-dev \
+    zlib1g-dev \
     && rm -rf /var/lib/apt/lists/*
 
 # Install R packages

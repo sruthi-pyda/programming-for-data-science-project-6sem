@@ -42,22 +42,76 @@ dt <- fread(file.path(data_dir, "traffic_collisions_clean.csv"))
 agg <- dt[!is.na(area) & !is.na(hour) & !is.na(month_num),
           .(accident_count = .N,
             avg_victim_age = mean(vict_age, na.rm = TRUE),
-            avg_severity   = mean(mo_code_count, na.rm = TRUE)),
-          by = .(area, hour, month_num, premis_cd)]
+            avg_severity   = mean(mo_code_count, na.rm = TRUE),
+            avg_hist_freq  = mean(hist_freq, na.rm = TRUE),
+            prop_female    = mean(vict_sex == "F", na.rm = TRUE)),
+          by = .(area, hour, month_num, day_num, premis_cd)]
 
-q33 <- quantile(agg$accident_count, 0.33)
-q66 <- quantile(agg$accident_count, 0.66)
+# EDA Step 1: Remove rare premise codes (must match 04_modeling.R)
+premis_freq  <- agg[, .N, by = premis_cd]
+valid_premis <- premis_freq[N >= 5, premis_cd]
+agg          <- agg[premis_cd %in% valid_premis]
+
+# Mean accident count features (must match 04_modeling.R)
+area_hour_mean  <- agg[, .(area_hour_mean  = mean(accident_count)), by = .(area, hour)]
+area_month_mean <- agg[, .(area_month_mean = mean(accident_count)), by = .(area, month_num)]
+area_day_mean   <- agg[, .(area_day_mean   = mean(accident_count)), by = .(area, day_num)]
+hour_day_mean   <- agg[, .(hour_day_mean   = mean(accident_count)), by = .(hour, day_num)]
+area_mean       <- agg[, .(area_mean       = mean(accident_count)), by = area]
+premis_mean     <- agg[, .(premis_mean     = mean(accident_count)), by = premis_cd]
+hour_mean       <- agg[, .(hour_mean       = mean(accident_count)), by = hour]
+
+agg <- merge(agg, area_hour_mean,  by = c("area", "hour"),      all.x = TRUE)
+agg <- merge(agg, area_month_mean, by = c("area", "month_num"), all.x = TRUE)
+agg <- merge(agg, area_day_mean,   by = c("area", "day_num"),   all.x = TRUE)
+agg <- merge(agg, hour_day_mean,   by = c("hour", "day_num"),   all.x = TRUE)
+agg <- merge(agg, area_mean,       by = "area",                 all.x = TRUE)
+agg <- merge(agg, premis_mean,     by = "premis_cd",            all.x = TRUE)
+agg <- merge(agg, hour_mean,       by = "hour",                 all.x = TRUE)
+setDT(agg)
+
+agg[, is_weekend := as.integer(day_num %in% c(1L, 7L))]
+
+# Cyclical encoding (must match 04_modeling.R)
+agg[, hour_sin  := sin(2 * pi * hour / 24)]
+agg[, hour_cos  := cos(2 * pi * hour / 24)]
+agg[, month_sin := sin(2 * pi * month_num / 12)]
+agg[, month_cos := cos(2 * pi * month_num / 12)]
+
+# EDA Step 2: Wide buffer zones (must match 04_modeling.R)
+q20 <- quantile(agg$accident_count, 0.20)
+q47 <- quantile(agg$accident_count, 0.47)
+q53 <- quantile(agg$accident_count, 0.53)
+q80 <- quantile(agg$accident_count, 0.80)
 
 agg[, risk_level := fcase(
-  accident_count <= q33, "Low",
-  accident_count <= q66, "Medium",
-  default = "High"
+  accident_count <= q20,                          "Low",
+  accident_count >= q47 & accident_count <= q53,  "Medium",
+  accident_count >= q80,                          "High",
+  default = NA_character_
 )]
+agg <- agg[!is.na(risk_level)]
+agg[, risk_level := factor(risk_level, levels = c("Low", "Medium", "High"))]
+
+# EDA Step 3: Remove ambiguous Medium rows across multiple dimensions
+low_ahr_threshold    <- median(agg[risk_level == "Low"]$area_hour_mean,  na.rm = TRUE)
+low_area_threshold   <- median(agg[risk_level == "Low"]$area_mean,        na.rm = TRUE)
+low_month_threshold  <- median(agg[risk_level == "Low"]$area_month_mean,  na.rm = TRUE)
+low_premis_threshold <- median(agg[risk_level == "Low"]$premis_mean,      na.rm = TRUE)
+
+agg <- agg[!(risk_level == "Medium" & (
+  area_hour_mean  < low_ahr_threshold   |
+  area_mean       < low_area_threshold  |
+  area_month_mean < low_month_threshold |
+  premis_mean     < low_premis_threshold
+))]
 agg[, risk_level := factor(risk_level, levels = c("Low", "Medium", "High"))]
 
 mode_premis <- agg[!is.na(premis_cd), .N, by = premis_cd][which.max(N)]$premis_cd
-agg[is.na(premis_cd), premis_cd := mode_premis]
+agg[is.na(premis_cd),    premis_cd    := mode_premis]
 agg[is.na(avg_victim_age), avg_victim_age := median(agg$avg_victim_age, na.rm = TRUE)]
+agg[is.na(avg_hist_freq),  avg_hist_freq  := median(agg$avg_hist_freq,  na.rm = TRUE)]
+agg[is.na(prop_female),    prop_female    := 0.5]
 
 cat(sprintf("Dataset: %d rows | Risk distribution:\n", nrow(agg)))
 print(table(agg$risk_level))
@@ -67,7 +121,12 @@ train_idx <- createDataPartition(agg$risk_level, p = 0.8, list = FALSE)
 train_df  <- agg[ train_idx]
 test_df   <- agg[-train_idx]
 
-features <- c("area", "hour", "month_num", "premis_cd", "avg_victim_age", "avg_severity")
+features <- c("area", "hour", "month_num", "day_num", "premis_cd",
+              "avg_victim_age", "avg_severity", "avg_hist_freq", "prop_female",
+              "area_hour_mean", "area_month_mean", "area_day_mean",
+              "hour_day_mean", "area_mean", "premis_mean", "hour_mean",
+              "is_weekend",
+              "hour_sin", "hour_cos", "month_sin", "month_cos")
 
 X_train <- train_df[, ..features]
 y_train <- train_df$risk_level
